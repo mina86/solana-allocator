@@ -1,3 +1,6 @@
+# Copyright 2024 by Composable Foundation
+# Copyright 2025 by Michał Nazarewicz
+
 [package]
 name = "solana-allocator"
 authors = ["Michal Nazarewicz <mina86@mina86.com>"]
