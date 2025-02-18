@@ -115,7 +115,9 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
         layout: Layout,
     ) -> *mut u8 {
         let ptr = crate::ptr::align(ptr, layout.align());
-        let end = match (ptr as usize).checked_add(layout.size()) {
+        let end = (ptr as usize).checked_add(layout.size())
+            .filter(|&end| end <= 0x400000000);
+        let end = match end {
             None => return core::ptr::null_mut(),
             Some(addr) => crate::ptr::with_addr(ptr, addr),
         };
