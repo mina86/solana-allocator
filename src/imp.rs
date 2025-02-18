@@ -103,7 +103,12 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     ///
     /// Outside of unit tests, the check is done by writing zero byte to the
     /// last byte of the slice which will cause UB if it fails beyond available
-    /// heap space.  When run as Solana contract that UB is segfault.
+    /// heap space.
+    ///
+    /// When run as Solana contract that UB is segfault.  If `poke` Cargo
+    /// feature is enabled, the segfault happens when trying to allocate; by
+    /// default it’s deferred to the moment region past the heap is accessed by
+    /// the client (a bit like over-committing works in Linux).
     ///
     /// If check passes, returns `ptr` aligned to `layout.align()`.  Otherwise
     /// returns a NULL pointer.
@@ -129,6 +134,7 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
             // SAFETY: This is unsound but it will only execute on Solana where
             // accessing memory beyond heap results in segfault which is what we
             // want.
+            #[cfg(feature = "poke")]
             let _ = unsafe { end.sub(1).read_volatile() };
             true
         };

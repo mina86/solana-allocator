@@ -12,3 +12,21 @@ bytemuck = { version = "1.21", default-features = false }
 
 [target.'cfg(target_os = "solana")'.dependencies]
 solana-program = "1.18.26"
+
+[features]
+default = []
+
+# If enabled, poke last byte of the allocation.  Since the allocator
+# doesn’t know how big the heap is, if we run out of memory, this is
+# a way to force a segfault.
+#
+# Without this feature, the segfault will happen when user tries to
+# use the memory past the heap size.  This is a bit like
+# over-committing in Linux behaves where allocations always succeed
+# and failure happens only when user writes to a page and Linux fails
+# to allocate it.
+#
+# Disabling this is a µoptimisation which removes a couple of
+# instructions from the allocation code at the cost of deferring
+# allocation failure errors.
+poke = []
