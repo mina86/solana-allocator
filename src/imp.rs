@@ -71,10 +71,7 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
         let (start, size) = (self.ptr.as_ptr(), self.layout.size());
         #[cfg(not(test))]
         // Solana heap is guaranteed to be at least 32 KiB.
-        let (start, size) = (
-            solana_program::entrypoint::HEAP_START_ADDRESS as *mut u8,
-            solana_program::entrypoint::HEAP_LENGTH,
-        );
+        let (start, size) = (0x300000000 as *mut u8, 32 * 1024);
         crate::ptr::range(start, size)
     }
 

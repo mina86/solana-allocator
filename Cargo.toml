@@ -10,9 +10,6 @@ edition = "2021"
 [dependencies]
 bytemuck = { version = "1.21", default-features = false }
 
-[target.'cfg(target_os = "solana")'.dependencies]
-solana-program = "1.18.26"
-
 [features]
 default = []
 
