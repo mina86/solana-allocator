@@ -42,12 +42,37 @@ pub struct BumpAllocator<G> {
 }
 
 
+/// Start address of the memory region used for program heap.
+///
+/// This is the same as `solana_sdk::entrypoint::HEAP_START_ADDRESS`.
+#[cfg(not(test))]
+const HEAP_START_ADDRESS: u64 = 0x3_0000_0000;
+
+/// Minimal length of the heap memory region used for program heap.
+///
+/// The actual heap size may be larger if Compute Budget Program’s
+/// `RequestHeapFrame` instruction was used.
+///
+/// This is the same as `solana_sdk::entrypoint::HEAP_LENGTH`.
+#[cfg(not(test))]
+const HEAP_LENGTH: usize = 32 * 1024;
+
+/// Start address of the memory region where program input parameters are
+/// stored.
+///
+/// See <https://solana.com/docs/programs/faq#memory-map>.
+#[cfg(not(test))]
+const PROGRAM_INPUT_ADDRESS: u64 = 0x4_0000_0000;
+
+
+/// Data stored by the [`BumpAllocator`] at the start of the heap.
 struct Header<G> {
     end_pos: Cell<*mut u8>,
     global: G,
 }
 
-impl<G: bytemuck::Zeroable> BumpAllocator<G> {
+#[cfg(not(test))]
+impl<G> BumpAllocator<G> {
     /// Creates a new global allocator.
     ///
     /// # Safety
@@ -58,23 +83,36 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     /// Using multiple BumpAllocators or using this allocator while other global
     /// allocator is present leads to undefined behaviour since the allocator
     /// needs to take ownership of the heap provided by Solana runtime.
-    #[cfg(not(test))]
     pub const unsafe fn new() -> Self {
         Self { _ph: core::marker::PhantomData }
     }
 
-    /// Returns range of addresses that are guaranteed to be valid and within
-    /// the heap owned by us.
-    #[inline]
-    fn heap_range(&self) -> core::ops::Range<*mut u8> {
-        #[cfg(test)]
-        let (start, size) = (self.ptr.as_ptr(), self.layout.size());
-        #[cfg(not(test))]
-        // Solana heap is guaranteed to be at least 32 KiB.
-        let (start, size) = (0x300000000 as *mut u8, 32 * 1024);
-        crate::ptr::range(start, size)
+    /// Returns start of the heap.
+    const fn heap_start(&self) -> *mut u8 { HEAP_START_ADDRESS as *mut u8 }
+
+    /// Returns safe end of the heap, i.e. end of a region that is guaranteed to
+    /// be valid heap.
+    ///
+    /// Since we don’t know the actual Solana heap size, this is limited to just
+    /// 32 KiB when running on Solana (which is guaranteed minimum heap size).
+    const fn heap_safe_end(&self) -> *mut u8 {
+        (HEAP_START_ADDRESS + HEAP_LENGTH as u64) as *mut u8
     }
 
+    /// Returns the address at which there’s definitely no heap.
+    const fn heap_limit(&self) -> *mut u8 { PROGRAM_INPUT_ADDRESS as *mut u8 }
+}
+
+#[cfg(test)]
+impl<G> BumpAllocator<G> {
+    fn heap_start(&self) -> *mut u8 { self.ptr.as_ptr() }
+    fn heap_safe_end(&self) -> *mut u8 {
+        self.heap_start().wrapping_add(self.layout.size())
+    }
+    fn heap_limit(&self) -> *mut u8 { self.heap_safe_end() }
+}
+
+impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     /// Returns reference to allocator’s internal data stored at the front of
     /// the heap.
     ///
@@ -82,13 +120,14 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     /// and global state `G` reserved for the users of this allocator.
     #[inline]
     fn header(&self) -> &Header<G> {
-        let range = self.heap_range();
         // In release build on Solana, all of those numbers are known at compile
         // time so all this maths should be compiled out.
-        let ptr =
-            crate::ptr::align(range.start, core::mem::align_of::<*mut u8>());
+        let ptr = crate::ptr::align(
+            self.heap_start(),
+            core::mem::align_of::<*mut u8>(),
+        );
         let end = ptr.wrapping_add(core::mem::size_of::<*mut u8>());
-        assert!(end <= range.end);
+        assert!(end <= self.heap_safe_end());
         // SAFETY: 1. `ptr` is properly aligned and points to region within heap
         // owned by us.  2. The heap has been zero-initialised and Header<G> is
         // Zeroable.
@@ -117,25 +156,20 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
         layout: Layout,
     ) -> *mut u8 {
         let ptr = crate::ptr::align(ptr, layout.align());
-        let end = (ptr as usize).checked_add(layout.size()).filter(|&end| {
-            end < if cfg!(test) {
-                self.heap_range().end as usize
-            } else {
-                0x400000000
-            }
-        });
-        let end = match end {
-            None => return core::ptr::null_mut(),
-            Some(addr) => crate::ptr::with_addr(ptr, addr),
-        };
-        if !cfg!(test) && cfg!(feature = "poke") {
-            // SAFETY: This is unsound but it will only execute on Solana where
-            // accessing memory beyond heap results in segfault which is what we
-            // want.
-            let _ = unsafe { end.sub(1).read_volatile() };
-        }
-        header.end_pos.set(end);
-        ptr
+        (ptr as usize)
+            .checked_add(layout.size())
+            .map(|addr| crate::ptr::with_addr(ptr, addr))
+            .filter(|&end| end <= self.heap_limit())
+            .map_or(core::ptr::null_mut(), |end| {
+                if !cfg!(test) && cfg!(feature = "poke") {
+                    // SAFETY: This is unsound but it will only execute on
+                    // Solana where accessing memory beyond heap results in
+                    // segfault which is what we want.
+                    let _ = unsafe { end.sub(1).read_volatile() };
+                }
+                header.end_pos.set(end);
+                ptr
+            })
     }
 
     /// Returns reference to global state `G` reserved on the heap.
@@ -157,7 +191,7 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
             // On first call, end_pos is null.  Start allocating past the
             // header.
             ptr = crate::ptr::with_addr(
-                self.heap_range().start,
+                self.heap_start(),
                 crate::ptr::end_addr_of_val(header),
             );
         };

@@ -21,12 +21,6 @@ pub(super) fn end_addr_of_val<T: Sized>(obj: &T) -> usize {
     (obj as *const T).wrapping_add(1) as usize
 }
 
-/// Returns a range of pointers of given size.
-pub(super) fn range(start: *mut u8, size: usize) -> core::ops::Range<*mut u8> {
-    start..start.wrapping_add(size)
-}
-
-
 /// Copies `size` bytes from `src` to `dst`.
 ///
 /// # Safety
@@ -48,8 +42,8 @@ pub(super) fn assert_no_overlap(
     b: *const u8,
     b_size: usize,
 ) {
-    let a = range(a as *mut u8, a_size);
-    let b = range(b as *mut u8, b_size);
+    let a = a..a.wrapping_add(a_size);
+    let b = b..b.wrapping_add(b_size);
     assert!(
         !a.contains(&b.start) && !a.contains(&b.end),
         "{a:?} and {b:?} overlap",
