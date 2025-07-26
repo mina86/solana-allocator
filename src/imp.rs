@@ -124,10 +124,12 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
         // time so all this maths should be compiled out.
         let ptr = crate::ptr::align(
             self.heap_start(),
-            core::mem::align_of::<*mut u8>(),
+            core::mem::align_of::<Header<G>>(),
         );
-        let end = ptr.wrapping_add(core::mem::size_of::<*mut u8>());
-        assert!(end <= self.heap_safe_end());
+        // Make sure that the header does not go past the safe portion of the
+        // heap (i.e. portion we are guaranteed to be accessible).
+        let end = ptr.wrapping_add(core::mem::size_of::<Header<G>>());
+        assert!(end <= self.heap_safe_end(), "Global state too large");
         // SAFETY: 1. `ptr` is properly aligned and points to region within heap
         // owned by us.  2. The heap has been zero-initialised and Header<G> is
         // Zeroable.

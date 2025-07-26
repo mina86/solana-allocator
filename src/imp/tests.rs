@@ -193,3 +193,11 @@ fn test_global() {
     // Global state doesn’t change location.
     assert!(core::ptr::eq(global, allocator.global()));
 }
+
+#[test]
+#[should_panic]
+fn test_global_too_large() {
+    let allocator = BumpAllocator::<Cell<[u8; 64]>>::new(64);
+    // The global state is too large.
+    let _global = allocator.global();
+}
