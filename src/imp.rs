@@ -118,7 +118,6 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     ///
     /// The header includes address of the start of the available free memory
     /// and global state `G` reserved for the users of this allocator.
-    #[inline]
     fn header(&self) -> &Header<G> {
         // In release build on Solana, all of those numbers are known at compile
         // time so all this maths should be compiled out.
@@ -150,7 +149,6 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     ///
     /// If check passes, returns `ptr` aligned to `layout.align()`.  Otherwise
     /// returns a NULL pointer.
-    #[inline]
     fn update_end_pos(
         &self,
         header: &Header<G>,
@@ -201,7 +199,6 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
     }
 
     /// Deallocates specified object.
-    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let header = self.header();
         // If this is the last allocation, free it.  Otherwise this is bump
@@ -212,7 +209,6 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
     }
 
     /// Reallocate an object.
-    #[inline]
     unsafe fn realloc(
         &self,
         ptr: *mut u8,
