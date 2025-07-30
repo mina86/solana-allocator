@@ -3,16 +3,16 @@
 
 [package]
 name = "solana-allocator"
-version = "0.1.0"
+version = "0.1.1"
 description = "A global allocator for Solana programs supporting ≥32 KiB heap sizes and mutable global state."
 authors = ["Michal Nazarewicz <mina86@mina86.com>"]
 homepage = "https://codeberg.org/mina86/solana-allocator"
 license = "GPL-2.0-or-later"
-edition = "2024"
+edition = "2021"
 readme = "README.md"
 
 [dependencies]
-bytemuck = { version = "1.21", default-features = false }
+bytemuck = { version = "1.21", default-features = false, features = ["derive"] }
 
 [features]
 default = []
