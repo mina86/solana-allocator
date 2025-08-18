@@ -157,12 +157,7 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     ///
     /// If check passes, returns `ptr` aligned to `layout.align()`.  Otherwise
     /// returns a NULL pointer.
-    fn update_end_pos(
-        &self,
-        header: &Header<G>,
-        ptr: *mut u8,
-        layout: Layout,
-    ) -> *mut u8 {
+    fn update_end_pos(&self, ptr: *mut u8, layout: Layout) -> *mut u8 {
         let ptr = crate::ptr::align(ptr, layout.align());
         (ptr as usize)
             .checked_add(layout.size())
@@ -175,7 +170,7 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
                     // segfault which is what we want.
                     let _ = unsafe { end.sub(1).read_volatile() };
                 }
-                header.end_pos.set(end);
+                self.header().end_pos.set(end);
                 ptr
             })
     }
@@ -203,7 +198,7 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
                 crate::ptr::end_addr_of_val(header),
             );
         };
-        self.update_end_pos(header, ptr, layout)
+        self.update_end_pos(ptr, layout)
     }
 
     /// Deallocates specified object.
@@ -231,14 +226,14 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
         let tail = header.end_pos.get();
         if ptr.wrapping_add(layout.size()) == tail {
             // If this is the last allocation, resize.
-            self.update_end_pos(header, ptr, new_layout)
+            self.update_end_pos(ptr, new_layout)
         } else if new_size <= layout.size() {
             // If user wants to shrink size, do nothing.  We’re leaking memory
             // here but we’re bump allocator so that’s what we do.
             ptr
         } else {
             // Otherwise, we need to make a new allocation and copy.
-            let new_ptr = self.update_end_pos(header, tail, new_layout);
+            let new_ptr = self.update_end_pos(tail, new_layout);
             if !new_ptr.is_null() {
                 // SAFETY: The previously allocated block cannot overlap the
                 // newly allocated block.  Note that layout.size() < new_size.
