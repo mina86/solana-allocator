@@ -62,9 +62,8 @@ macro_rules! custom_heap {
         #[global_allocator]
         // SAFETY: We’re compiling for Solana and declaring this as a global
         // allocator which can exist only one.
-        static A: $crate::BumpAllocator<()> = unsafe {
-            $crate::BumpAllocator::new();
-        };
+        static A: $crate::BumpAllocator<()> =
+            unsafe { $crate::BumpAllocator::new() };
     };
 }
 
