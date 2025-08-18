@@ -4,24 +4,6 @@ use core::cell::Cell;
 use crate::{ptr, BumpAllocator};
 
 impl<G: bytemuck::Zeroable> BumpAllocator<G> {
-    /// Creates a new allocator with given amount of available memory.
-    fn new(size: usize) -> Self {
-        let layout =
-            Layout::from_size_align(size, core::mem::align_of::<Cell<usize>>())
-                .unwrap();
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-        let ptr = core::ptr::NonNull::new(ptr).unwrap();
-        Self { ptr, layout, _ph: core::marker::PhantomData }
-    }
-
-    /// Returns amount of used memory in bytes excluding space used for end
-    /// position address stored at the start of the heap.
-    fn used(&self) -> usize {
-        let header = self.header();
-        let end = ptr::end_addr_of_val(header);
-        (header.end_pos.get() as usize).saturating_sub(end)
-    }
-
     /// Allocates region of memory; checks returned alignment.
     fn check_alloc(&self, layout: Layout) -> Option<*mut u8> {
         core::ptr::NonNull::new(unsafe { self.alloc(layout) }).map(|ptr| {

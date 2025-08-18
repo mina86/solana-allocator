@@ -54,7 +54,6 @@ const HEAP_START_ADDRESS: u64 = 0x3_0000_0000;
 /// `RequestHeapFrame` instruction was used.
 ///
 /// This is the same as `solana_sdk::entrypoint::HEAP_LENGTH`.
-#[cfg(not(test))]
 const HEAP_LENGTH: usize = 32 * 1024;
 
 /// Start address of the memory region where program input parameters are
@@ -90,26 +89,37 @@ impl<G> BumpAllocator<G> {
     /// Returns start of the heap.
     const fn heap_start(&self) -> *mut u8 { HEAP_START_ADDRESS as *mut u8 }
 
-    /// Returns safe end of the heap, i.e. end of a region that is guaranteed to
-    /// be valid heap.
-    ///
-    /// Since we don’t know the actual Solana heap size, this is limited to just
-    /// 32 KiB when running on Solana (which is guaranteed minimum heap size).
-    const fn heap_safe_end(&self) -> *mut u8 {
-        (HEAP_START_ADDRESS + HEAP_LENGTH as u64) as *mut u8
-    }
-
     /// Returns the address at which there’s definitely no heap.
     const fn heap_limit(&self) -> *mut u8 { PROGRAM_INPUT_ADDRESS as *mut u8 }
 }
 
 #[cfg(test)]
-impl<G> BumpAllocator<G> {
+impl<G: bytemuck::Zeroable> BumpAllocator<G> {
+    /// Creates a new allocator with given amount of available memory.
+    ///
+    /// Panics if allocation fails, or requested size is less than size of the
+    /// header.
+    fn new(size: usize) -> Self {
+        assert!(size >= core::mem::size_of::<Header<G>>());
+        let align = core::mem::align_of::<Header<G>>();
+        let layout = Layout::from_size_align(size, align).unwrap();
+        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        let ptr = core::ptr::NonNull::new(ptr).unwrap();
+        Self { ptr, layout, _ph: core::marker::PhantomData }
+    }
+
+    /// Returns amount of used memory in bytes excluding space used for end
+    /// position address stored at the start of the heap.
+    fn used(&self) -> usize {
+        let header = self.header();
+        let end = crate::ptr::end_addr_of_val(header);
+        (header.end_pos.get() as usize).saturating_sub(end)
+    }
+
     fn heap_start(&self) -> *mut u8 { self.ptr.as_ptr() }
-    fn heap_safe_end(&self) -> *mut u8 {
+    fn heap_limit(&self) -> *mut u8 {
         self.heap_start().wrapping_add(self.layout.size())
     }
-    fn heap_limit(&self) -> *mut u8 { self.heap_safe_end() }
 }
 
 impl<G: bytemuck::Zeroable> BumpAllocator<G> {
@@ -119,20 +129,18 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     /// The header includes address of the start of the available free memory
     /// and global state `G` reserved for the users of this allocator.
     fn header(&self) -> &Header<G> {
-        // In release build on Solana, all of those numbers are known at compile
-        // time so all this maths should be compiled out.
-        let ptr = crate::ptr::align(
-            self.heap_start(),
-            core::mem::align_of::<Header<G>>(),
-        );
-        // Make sure that the header does not go past the safe portion of the
-        // heap (i.e. portion we are guaranteed to be accessible).
-        let end = ptr.wrapping_add(core::mem::size_of::<Header<G>>());
-        assert!(end <= self.heap_safe_end(), "Global state too large");
-        // SAFETY: 1. `ptr` is properly aligned and points to region within heap
-        // owned by us.  2. The heap has been zero-initialised and Header<G> is
-        // Zeroable.
-        unsafe { &*ptr.cast() }
+        // Make sure header does not go past the guaranteed heap space.
+        let _: () = const {
+            assert!(
+                core::mem::size_of::<Header<G>>() <= HEAP_LENGTH,
+                "Global state too large"
+            )
+        };
+        // SAFETY: 1. On Solana heap has sufficient alignment for anything and
+        // we’ve checked header fits on the heap; in tests, Self::new guarantees
+        // size and alignment.
+        // 2. The heap has been zero-initialised and Header<G> is Zeroable.
+        unsafe { &*self.heap_start().cast() }
     }
 
     /// Checks whether given slice falls within available heap space and updates
