@@ -59,8 +59,31 @@ const HEAP_LENGTH: usize = 32 * 1024;
 
 /// Data stored by the [`BumpAllocator`] at the start of the heap.
 struct Header<G> {
-    end_offset: Cell<u32>,
+    /// Amount of used memory or end offset from the end of the header.
+    ///
+    /// To access the offset, users should call [`Header::get_end_offset`] and
+    /// [`Header::set_end_offset`] which operate on offset from the start of
+    /// heap.
+    used: Cell<u32>,
+
+    /// The global state.
     global: G,
+}
+
+impl<G> Header<G> {
+    /// Size of the header.
+    const SIZE: u32 = match core::mem::size_of::<Header<G>>() {
+        size if size <= u32::MAX as usize => size as u32,
+        _ => panic!("Header too large"),
+    };
+
+    /// Returns end offset from the start of the heap, i.e. offset of the first
+    /// byte available for allocation.
+    fn get_end_offset(&self) -> u32 { self.used.get() + Self::SIZE }
+
+    /// Sets end offset from the start of the heap (i.e. offset of the first
+    /// byte available for allocation) to given value.
+    fn set_end_offset(&self, offset: u32) { self.used.set(offset - Self::SIZE) }
 }
 
 #[cfg(not(test))]
@@ -112,10 +135,7 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
 
     /// Returns amount of used memory in bytes excluding space used for end
     /// position address stored at the start of the heap.
-    fn used(&self) -> usize {
-        (self.header().end_offset.get() as usize)
-            .saturating_sub(core::mem::size_of_val(self.header()))
-    }
+    fn used(&self) -> usize { self.header().used.get() as usize }
 
     fn heap_start(&self) -> *mut u8 { self.ptr.as_ptr() }
     fn to_offset(&self, ptr: *mut u8) -> u32 {
@@ -190,7 +210,7 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
         // want.
         let _ = unsafe { self.from_offset(end_offset - 1).read_volatile() };
 
-        self.header().end_offset.set(end_offset);
+        self.header().set_end_offset(end_offset);
         Some(self.from_offset(offset))
     }
 
@@ -207,13 +227,8 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
 
 unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let header = self.header();
-        let offset = match header.end_offset.get() {
-            // On first call, end_offset is zero.  Initialise past the header.
-            0 => core::mem::size_of_val(header) as u32,
-            x => x,
-        };
-        self.update_end_offset(offset, layout).unwrap_or(core::ptr::null_mut())
+        self.update_end_offset(self.header().get_end_offset(), layout)
+            .unwrap_or(core::ptr::null_mut())
     }
 
     /// Deallocates specified object.
@@ -222,8 +237,8 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
         // If this is the last allocation, free it.  Otherwise this is bump
         // allocator and we leak memory.
         let end_offset = self.to_offset(ptr.wrapping_add(layout.size()));
-        if end_offset == header.end_offset.get() {
-            header.end_offset.set(self.to_offset(ptr));
+        if end_offset == header.get_end_offset() {
+            header.set_end_offset(self.to_offset(ptr));
         }
     }
 
@@ -239,7 +254,7 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
             Layout::from_size_align_unchecked(new_size, layout.align())
         };
         let header = self.header();
-        let tail = header.end_offset.get();
+        let tail = header.get_end_offset();
         if self.to_offset(ptr.wrapping_add(layout.size())) == tail {
             // If this is the last allocation, resize.
             self.update_end_offset(self.to_offset(ptr), new_layout)
