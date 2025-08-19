@@ -31,8 +31,6 @@ extern crate alloc;
 
 #[cfg(any(test, target_os = "solana"))]
 mod imp;
-#[cfg(any(test, target_os = "solana"))]
-mod ptr;
 
 #[cfg(any(test, target_os = "solana"))]
 pub use imp::BumpAllocator;

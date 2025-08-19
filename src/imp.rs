@@ -56,17 +56,10 @@ const HEAP_START_ADDRESS: u64 = 0x3_0000_0000;
 /// This is the same as `solana_sdk::entrypoint::HEAP_LENGTH`.
 const HEAP_LENGTH: usize = 32 * 1024;
 
-/// Start address of the memory region where program input parameters are
-/// stored.
-///
-/// See <https://solana.com/docs/programs/faq#memory-map>.
-#[cfg(not(test))]
-const PROGRAM_INPUT_ADDRESS: u64 = 0x4_0000_0000;
-
 
 /// Data stored by the [`BumpAllocator`] at the start of the heap.
 struct Header<G> {
-    end_pos: Cell<*mut u8>,
+    end_offset: Cell<u32>,
     global: G,
 }
 
@@ -89,19 +82,28 @@ impl<G> BumpAllocator<G> {
     /// Returns start of the heap.
     const fn heap_start(&self) -> *mut u8 { HEAP_START_ADDRESS as *mut u8 }
 
-    /// Returns the address at which there’s definitely no heap.
-    const fn heap_limit(&self) -> *mut u8 { PROGRAM_INPUT_ADDRESS as *mut u8 }
+    /// Returns offset from the start of the heap of given pointer.
+    ///
+    /// Assumes the pointer falls withing the heap or points one past the end of
+    /// the heap.
+    fn to_offset(&self, ptr: *mut u8) -> u32 { ptr as usize as u32 }
+
+    /// Returns pointer to a byte at given offset within a heap.
+    fn from_offset(&self, offset: u32) -> *mut u8 {
+        (u64::from(offset) | HEAP_START_ADDRESS) as *mut u8
+    }
 }
 
 #[cfg(test)]
 impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     /// Creates a new allocator with given amount of available memory.
     ///
-    /// Panics if allocation fails, or requested size is less than size of the
-    /// header.
+    /// `size` is capped at `u32::MAX`.  Panics if allocation fails, or
+    /// requested size is less than size of the header.
     fn new(size: usize) -> Self {
+        let size = size.min(u32::MAX as usize);
         assert!(size >= core::mem::size_of::<Header<G>>());
-        let align = core::mem::align_of::<Header<G>>();
+        let align = core::mem::align_of::<Header<G>>().max(16);
         let layout = Layout::from_size_align(size, align).unwrap();
         let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
         let ptr = core::ptr::NonNull::new(ptr).unwrap();
@@ -111,14 +113,24 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     /// Returns amount of used memory in bytes excluding space used for end
     /// position address stored at the start of the heap.
     fn used(&self) -> usize {
-        let header = self.header();
-        let end = crate::ptr::end_addr_of_val(header);
-        (header.end_pos.get() as usize).saturating_sub(end)
+        (self.header().end_offset.get() as usize)
+            .saturating_sub(core::mem::size_of_val(self.header()))
     }
 
     fn heap_start(&self) -> *mut u8 { self.ptr.as_ptr() }
-    fn heap_limit(&self) -> *mut u8 {
-        self.heap_start().wrapping_add(self.layout.size())
+    fn to_offset(&self, ptr: *mut u8) -> u32 {
+        (ptr as usize - self.heap_start() as usize) as u32
+    }
+    fn from_offset(&self, offset: u32) -> *mut u8 {
+        self.heap_start().wrapping_add(offset as usize)
+    }
+}
+
+#[cfg(test)]
+impl<G> core::ops::Drop for BumpAllocator<G> {
+    fn drop(&mut self) {
+        // SAFETY: ptr and layout are the same as when we’ve allocated.
+        unsafe { alloc::alloc::dealloc(self.ptr.as_ptr(), self.layout) }
     }
 }
 
@@ -131,48 +143,55 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     fn header(&self) -> &Header<G> {
         // Make sure header does not go past the guaranteed heap space.
         let _: () = const {
-            assert!(
-                core::mem::size_of::<Header<G>>() <= HEAP_LENGTH,
-                "Global state too large"
-            )
+            let header_size = core::mem::size_of::<Header<G>>();
+            assert!(header_size <= HEAP_LENGTH, "Global state too large")
         };
-        // SAFETY: 1. On Solana heap has sufficient alignment for anything and
-        // we’ve checked header fits on the heap; in tests, Self::new guarantees
-        // size and alignment.
+        // SAFETY:
+        // 1. In Solana build, heap is aligned to 2**32 and we’ve just
+        //    checked header fits in heap; in test Self::new guarantees
+        //    size and alignment hold.
         // 2. The heap has been zero-initialised and Header<G> is Zeroable.
         unsafe { &*self.heap_start().cast() }
     }
 
     /// Checks whether given slice falls within available heap space and updates
-    /// end position address if it does.
+    /// end offset if it does.
     ///
-    /// Outside of unit tests, the check is done by writing zero byte to the
-    /// last byte of the slice which will cause UB if it fails beyond available
-    /// heap space.
+    /// Outside of unit tests, if `poke` Cargo feature is enabled, the check is
+    /// done by writing zero byte to the last byte of the slice which will cause
+    /// UB if it fails beyond available heap space.
     ///
     /// When run as Solana contract that UB is segfault.  If `poke` Cargo
     /// feature is enabled, the segfault happens when trying to allocate; by
     /// default it’s deferred to the moment region past the heap is accessed by
     /// the client (a bit like over-committing works in Linux).
     ///
-    /// If check passes, returns `ptr` aligned to `layout.align()`.  Otherwise
-    /// returns a NULL pointer.
-    fn update_end_pos(&self, ptr: *mut u8, layout: Layout) -> *mut u8 {
-        let ptr = crate::ptr::align(ptr, layout.align());
-        (ptr as usize)
-            .checked_add(layout.size())
-            .map(|addr| crate::ptr::with_addr(ptr, addr))
-            .filter(|&end| end <= self.heap_limit())
-            .map_or(core::ptr::null_mut(), |end| {
-                if !cfg!(test) && cfg!(feature = "poke") {
-                    // SAFETY: This is unsound but it will only execute on
-                    // Solana where accessing memory beyond heap results in
-                    // segfault which is what we want.
-                    let _ = unsafe { end.sub(1).read_volatile() };
-                }
-                self.header().end_pos.set(end);
-                ptr
-            })
+    /// If check passes, returns pointer is aligned to `layout.align()`.
+    fn update_end_offset(
+        &self,
+        offset: u32,
+        layout: Layout,
+    ) -> Option<*mut u8> {
+        #[cfg(test)]
+        assert!(layout.align() <= self.layout.align());
+
+        let size = u32::try_from(layout.size()).ok()?;
+        let mask = (layout.align() - 1) as u32;
+        let offset: u32 = offset.checked_add(mask)? & !mask;
+        let end_offset = offset.checked_add(size)?;
+
+        #[cfg(test)]
+        if end_offset as usize > self.layout.size() {
+            return None;
+        }
+        #[cfg(all(not(test), feature = "poke"))]
+        // SAFETY: This is unsound but it will only execute on Solana where
+        // accessing memory beyond heap results in segfault which is what we
+        // want.
+        let _ = unsafe { self.from_offset(end_offset - 1).read_volatile() };
+
+        self.header().end_offset.set(end_offset);
+        Some(self.from_offset(offset))
     }
 
     /// Returns reference to global state `G` reserved on the heap.
@@ -189,16 +208,12 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
 unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let header = self.header();
-        let mut ptr = header.end_pos.get();
-        if ptr.is_null() {
-            // On first call, end_pos is null.  Start allocating past the
-            // header.
-            ptr = crate::ptr::with_addr(
-                self.heap_start(),
-                crate::ptr::end_addr_of_val(header),
-            );
+        let offset = match header.end_offset.get() {
+            // On first call, end_offset is zero.  Initialise past the header.
+            0 => core::mem::size_of_val(header) as u32,
+            x => x,
         };
-        self.update_end_pos(ptr, layout)
+        self.update_end_offset(offset, layout).unwrap_or(core::ptr::null_mut())
     }
 
     /// Deallocates specified object.
@@ -206,8 +221,9 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
         let header = self.header();
         // If this is the last allocation, free it.  Otherwise this is bump
         // allocator and we leak memory.
-        if ptr.wrapping_add(layout.size()) == header.end_pos.get() {
-            header.end_pos.set(ptr);
+        let end_offset = self.to_offset(ptr.wrapping_add(layout.size()));
+        if end_offset == header.end_offset.get() {
+            header.end_offset.set(self.to_offset(ptr));
         }
     }
 
@@ -223,31 +239,47 @@ unsafe impl<G: bytemuck::Zeroable> GlobalAlloc for BumpAllocator<G> {
             Layout::from_size_align_unchecked(new_size, layout.align())
         };
         let header = self.header();
-        let tail = header.end_pos.get();
-        if ptr.wrapping_add(layout.size()) == tail {
+        let tail = header.end_offset.get();
+        if self.to_offset(ptr.wrapping_add(layout.size())) == tail {
             // If this is the last allocation, resize.
-            self.update_end_pos(ptr, new_layout)
+            self.update_end_offset(self.to_offset(ptr), new_layout)
+                .unwrap_or(core::ptr::null_mut())
         } else if new_size <= layout.size() {
             // If user wants to shrink size, do nothing.  We’re leaking memory
             // here but we’re bump allocator so that’s what we do.
             ptr
-        } else {
+        } else if let Some(new_ptr) = self.update_end_offset(tail, new_layout) {
             // Otherwise, we need to make a new allocation and copy.
-            let new_ptr = self.update_end_pos(tail, new_layout);
-            if !new_ptr.is_null() {
-                // SAFETY: The previously allocated block cannot overlap the
-                // newly allocated block.  Note that layout.size() < new_size.
-                unsafe { crate::ptr::memcpy(new_ptr, ptr, layout.size()) }
-            }
+            // SAFETY: The previously allocated block cannot overlap the
+            // newly allocated block.  Note that layout.size() < new_size.
+            unsafe { memcpy(new_ptr, ptr, layout.size()) }
             new_ptr
+        } else {
+            core::ptr::null_mut()
         }
     }
 }
 
-#[cfg(test)]
-impl<G> core::ops::Drop for BumpAllocator<G> {
-    fn drop(&mut self) {
-        // SAFETY: ptr and layout are the same as when we’ve allocated.
-        unsafe { alloc::alloc::dealloc(self.ptr.as_ptr(), self.layout) }
+/// Copies `size` bytes from `src` to `dst`.
+///
+/// # Safety
+///
+/// Caller must guarantees all of the conditions required by
+/// [`core::ptr::copy_nonoverlapping`].
+pub(super) unsafe fn memcpy(dst: *mut u8, src: *const u8, size: usize) {
+    if cfg!(debug_assertions) {
+        assert_no_overlap(dst, size, src, size);
     }
+    // SAFETY: Caller guarantees all necessary conditions.
+    unsafe { core::ptr::copy_nonoverlapping(src, dst, size) }
+}
+
+#[track_caller]
+fn assert_no_overlap(a: *const u8, a_size: usize, b: *const u8, b_size: usize) {
+    let a = a..a.wrapping_add(a_size);
+    let b = b..b.wrapping_add(b_size);
+    assert!(
+        !a.contains(&b.start) && !a.contains(&b.end),
+        "{a:?} and {b:?} overlap",
+    )
 }

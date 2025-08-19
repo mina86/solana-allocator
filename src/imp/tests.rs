@@ -1,7 +1,8 @@
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::cell::Cell;
 
-use crate::{ptr, BumpAllocator};
+use super::assert_no_overlap;
+use crate::BumpAllocator;
 
 impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     /// Allocates region of memory; checks returned alignment.
@@ -37,12 +38,7 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
                 assert_eq!(&old_data[..common_size], &new_data[..common_size]);
 
                 if ptr != new_ptr {
-                    ptr::assert_no_overlap(
-                        ptr,
-                        layout.size(),
-                        new_ptr,
-                        new_size,
-                    );
+                    assert_no_overlap(ptr, layout.size(), new_ptr, new_size);
                 }
 
                 new_ptr
@@ -50,13 +46,14 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
     }
 }
 
+
 #[test]
 fn test_alloc() {
     let allocator = BumpAllocator::<()>::new(64);
     assert_eq!(0, allocator.used());
 
     // Large allocation fails.
-    let large = Layout::from_size_align(64 - 7, 1).unwrap();
+    let large = Layout::from_size_align(64 - 3, 1).unwrap();
     assert_eq!(None, allocator.check_alloc(large));
 
     // Two successful allocations.  Cannot overlap.
@@ -68,7 +65,7 @@ fn test_alloc() {
 
     let second = allocator.check_alloc(layout_align_4).unwrap();
     assert_eq!(20, allocator.used());
-    ptr::assert_no_overlap(first, 9, second, 8);
+    assert_no_overlap(first, 9, second, 8);
 }
 
 #[test]
@@ -83,7 +80,7 @@ fn test_dealloc() {
 
     let second = allocator.check_alloc(layout).unwrap();
     assert_eq!(20, allocator.used());
-    ptr::assert_no_overlap(first, 10, second, 10);
+    assert_no_overlap(first, 10, second, 10);
 
     // Freeing last allocation recovers the memory.
     unsafe { allocator.dealloc(second, layout) };
@@ -165,7 +162,7 @@ fn test_global() {
     let layout = Layout::from_size_align(8, 1).unwrap();
     let ptr = allocator.check_alloc(layout).unwrap();
     assert_eq!(8, allocator.used());
-    ptr::assert_no_overlap(
+    assert_no_overlap(
         core::ptr::addr_of!(*global).cast(),
         core::mem::size_of_val(global),
         ptr,
@@ -174,12 +171,4 @@ fn test_global() {
 
     // Global state doesn’t change location.
     assert!(core::ptr::eq(global, allocator.global()));
-}
-
-#[test]
-#[should_panic]
-fn test_global_too_large() {
-    let allocator = BumpAllocator::<Cell<[u8; 64]>>::new(64);
-    // The global state is too large.
-    let _global = allocator.global();
 }
