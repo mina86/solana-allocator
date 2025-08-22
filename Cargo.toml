@@ -33,3 +33,6 @@ default = []
 # instructions from the allocation code at the cost of deferring
 # allocation failure errors.
 poke = []
+
+# Exposes some internal functions.  Meant only for testing.
+__internal = []

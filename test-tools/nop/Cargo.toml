@@ -1,0 +1,23 @@
+# Copyright 2025 by Michał Nazarewicz <mina86@mina86.com>
+
+[package]
+name = "nop-test"
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-allocator = { workspace = true }
+bytemuck = "*"
+
+[features]
+default = ["custom-heap"]
+custom-heap = []
+custom-panic = []
+global = []
+internal = ["solana-allocator/__internal"]

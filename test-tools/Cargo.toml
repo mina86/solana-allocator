@@ -1,0 +1,22 @@
+[workspace.package]
+authors = ["Michal Nazarewicz <mina86@mina86.com>"]
+homepage = "https://codeberg.org/mina86/solana-allocator"
+license = "GPL-2.0-or-later"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+members = ["client", "nop", "perf", "test"]
+resolver = "2"
+
+[workspace.dependencies]
+bytemuck = { version = "1.21", default-features = false }
+derive_more = { version = "1.0.0", default-features = false }
+itoa = { version = "1.0.15", default-features = false }
+linked_list_allocator = { version = "0.10.5", default-features = false }
+solana-client = { version = "2.3", default-features = false }
+solana-program = "2.3"
+solana-sdk = { version = "2.3" }
+solana-transaction-status = { version = "2.3", default-features = false }
+
+solana-allocator = { path = "../../allocator" }

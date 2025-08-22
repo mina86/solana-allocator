@@ -133,10 +133,6 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
         Self { ptr, layout, _ph: core::marker::PhantomData }
     }
 
-    /// Returns amount of used memory in bytes excluding space used for end
-    /// position address stored at the start of the heap.
-    fn used(&self) -> usize { self.header().used.get() as usize }
-
     fn heap_start(&self) -> *mut u8 { self.ptr.as_ptr() }
     fn to_offset(&self, ptr: *mut u8) -> u32 {
         (ptr as usize - self.heap_start() as usize) as u32
@@ -173,6 +169,26 @@ impl<G: bytemuck::Zeroable> BumpAllocator<G> {
         // 2. The heap has been zero-initialised and Header<G> is Zeroable.
         unsafe { &*self.heap_start().cast() }
     }
+
+    /// Returns size of the header.
+    #[cfg(feature = "__internal")]
+    #[doc(hidden)]
+    pub const fn header_size(&self) -> usize {
+        core::mem::size_of::<Header<G>>()
+    }
+
+    /// Returns pointer the first free byte available for allocation.
+    #[cfg(feature = "__internal")]
+    #[doc(hidden)]
+    pub fn get_end_offset(&self) -> *mut u8 {
+        self.from_offset(self.header().get_end_offset())
+    }
+
+    /// Returns amount of used memory in bytes not including space used for the
+    /// header stored at the start of the heap.
+    #[cfg(any(test, feature = "__internal"))]
+    #[doc(hidden)]
+    pub fn used(&self) -> usize { self.header().used.get() as usize }
 
     /// Checks whether given slice falls within available heap space and updates
     /// end offset if it does.

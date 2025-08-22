@@ -83,8 +83,8 @@ macro_rules! custom_heap {
 /// ```
 ///
 /// Defines function `$name` with specified visibility which returns a reference
-/// to a `'static` value of type `$Global`.  In the second invocation, the name
-/// of the function is `global`.
+/// to a `'static` reference to object of type `$Global`.  In the second
+/// invocation, the name of the function is `global`.
 ///
 /// `$Global` must be a [`Sync`](`core::marker::Sync`) and
 /// [`bytemuck::Zeroable`] type.  Furthermore, the `$name` function returns
@@ -156,17 +156,7 @@ macro_rules! custom_heap {
 #[macro_export]
 macro_rules! custom_global {
     ($visibility:vis fn $name:ident() -> $G:ty) => {
-        #[cfg(target_os = "solana")]
-        $visibility fn $name() -> &'static $G {
-            #[global_allocator]
-            // SAFETY: We’re compiling for Solana and declaring this as a global
-            // allocator which can exist only one.
-            static A: $crate::BumpAllocator<$G> = unsafe {
-                $crate::BumpAllocator::new()
-            };
-
-            A.global()
-        }
+        $crate::__private_custom_global!($visibility fn $name() -> $G);
     };
 
     ($visibility:vis type $G:ty) => {
@@ -195,5 +185,42 @@ macro_rules! custom_global {
         $crate::custom_global!(
             $visibility fn global() -> struct $G { $($tt)* }
         );
+    }
+}
+
+// Normally, hide the `A` symbol inside of the function so it’s not visible.
+#[cfg(not(feature = "__internal"))]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __private_custom_global {
+    ($visibility:vis fn $name:ident() -> $G:ty) => {
+        #[cfg(target_os = "solana")]
+        $visibility fn $name() -> &'static $G {
+            #[global_allocator]
+            // SAFETY: We’re compiling for Solana and declaring this as a global
+            // allocator which can exist only one.
+            static A: $crate::BumpAllocator<$G> = unsafe {
+                $crate::BumpAllocator::new()
+            };
+            A.global()
+        }
+    }
+}
+
+// When `__internal` feature is enabled, declare `A` symbol outside of the
+// function so that it’s visible to the rest of the code.
+#[cfg(all(target_os = "solana", feature = "__internal"))]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __private_custom_global {
+    ($visibility:vis fn $name:ident() -> $G:ty) => {
+        #[global_allocator]
+        // SAFETY: We’re compiling for Solana and declaring this as a global
+        // allocator which can exist only one.
+        static A: $crate::BumpAllocator<$G> = unsafe {
+            $crate::BumpAllocator::new()
+        };
+
+        $visibility fn $name() -> &'static $G { A.global() }
     }
 }

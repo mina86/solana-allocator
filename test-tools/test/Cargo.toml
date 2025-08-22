@@ -1,0 +1,26 @@
+# Copyright 2025 by Michał Nazarewicz <mina86@mina86.com>
+
+[package]
+name = "alloc-test"
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+derive_more = { workspace = true, features = ["from"] }
+bytemuck.workspace = true
+itoa.workspace = true
+solana-program.workspace = true
+
+solana-allocator = { workspace = true, features = ["__internal"] }
+
+[features]
+default = ["custom-heap"]
+custom-heap = []
+custom-panic = []
+test-global = []

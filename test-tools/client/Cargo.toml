@@ -1,0 +1,13 @@
+[package]
+name = "client"
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+derive_more =  { workspace = true, features = ["display", "from"] }
+solana-client.workspace = true
+solana-sdk = { workspace = true, features = ["full"] }
+solana-transaction-status.workspace = true
