@@ -20,12 +20,10 @@
 #![cfg_attr(not(target_os = "solana"), allow(unexpected_cfgs))]
 #![allow(private_bounds)]
 
-//! Custom global allocator which doesn’t assume 32 KiB heap size.
+//! Custom global allocator which doesn’t assume 32 KiB heap size and offers
+//! mutable global state support.
 //!
-//! Default Solana allocator assumes there’s only 32 KiB of available heap
-//! space.  Since heap size can be changed per-transaction, this assumption is
-//! not always accurate.  This module defines a global allocator which doesn’t
-//! assume size of available space.
+#![doc = include_str!("../README.md")]
 
 extern crate alloc;
 

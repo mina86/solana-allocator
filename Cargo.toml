@@ -3,7 +3,7 @@
 
 [package]
 name = "solana-allocator"
-version = "0.1.1"
+version = "0.1.2"
 description = "A global allocator for Solana programs supporting ≥32 KiB heap sizes and mutable global state."
 authors = ["Michal Nazarewicz <mina86@mina86.com>"]
 homepage = "https://codeberg.org/mina86/solana-allocator"
