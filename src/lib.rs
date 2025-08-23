@@ -106,6 +106,16 @@ macro_rules! custom_heap {
 /// that Solana is single-threaded thus passing data between threads is not
 /// a concern.
 ///
+/// Due to Rust technical limitations, to use this form the crate must depend on
+/// `bytemuck` crate.  If it doesn’t, compilation will fail with ‘could not find
+/// `bytemuck` in the list of imported crates’ error.  This can be done by
+/// adding the following to `Cargo.toml`:
+///
+/// ```toml
+/// [dependencies.bytemuck]
+/// version = "*"
+/// ```
+///
 /// # Non-Solana target
 ///
 /// When not building for Solana (i.e. for `not(target_os = "solana")`

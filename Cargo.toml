@@ -12,6 +12,8 @@ edition = "2021"
 readme = "README.md"
 
 [dependencies]
+# We don’t use `derive` feature but it’s likely that our users will need it so
+# enable it here so users can just do `bytemuck = "*"` in their `Cargo.toml`.
 bytemuck = { version = "1.21", default-features = false, features = ["derive"] }
 
 [features]
